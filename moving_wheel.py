@@ -20,8 +20,7 @@ import displayGroupOdbToolset as dgo
 import connectorBehavior
 import os
 #creating a model
-model_names = ['fric_04']
-# 'fric_04', 'fric_05', 'fric_07', 'fric_08','fric_09', 'fric_06','fric_10', 'fric_03', 'tran_03','fric_10'
+model_names = ['tran_04', 'roll_04']
 for model_name in model_names:
     if model_name in mdb.models.keys():
         del mdb.models[model_name] 
@@ -287,18 +286,38 @@ for model_name in model_names:
                 region=a.instances['wheel-1'].sets['center'], cf2=-162500.0, amplitude=UNSET, 
                 distributionType=UNIFORM, field='', localCsys=None)
 
-    region = a.instances['wheel-1'].sets['main']
-    mdb.models[model_name].DisplacementBC(name='wheel', createStepName='Initial', 
-        region=region, u1=SET, u2=UNSET, u3=SET, ur1=SET, ur2=SET, ur3=SET, 
-        amplitude=UNSET, distributionType=UNIFORM, fieldName='', 
-        localCsys=None)
+    # create wheel center a a reference point
+    a = mdb.models[model_name].rootAssembly
+    v1 = a.instances['wheel-1'].vertices
+    a.ReferencePoint(point=v1[1])
+    r1 = a.referencePoints
+    refPoints1=(r1[682], )
+    a.Set(referencePoints=refPoints1, name='rp_whl')
+
+    # coupling RP to whole wheel
+    mdb.models[model_name].Coupling(controlPoint=a.sets['rp_whl'], couplingType=KINEMATIC,influenceRadius=WHOLE_SURFACE, 
+        localCsys=None, name='whl_cpl', surface=a.instances['wheel-1'].sets['main'], u1=ON, u2=ON, u3=ON, ur1=ON, ur2=ON, ur3=ON)
+    
+    # rigid constraint to wheel about center
+    mdb.models[model_name].RigidBody(bodyRegion=a.instances['wheel-1'].sets['main'], name='whl_rgd', refPointRegion=a.sets['rp_whl'])
+
+    # creating wheel motion boundary condition
+    region = a.sets['rp_whl']
     amp_move = tuple([(i*0.01, i*0.1) for i in range(100)] )
-    mdb.models[model_name].TabularAmplitude(name='move', timeSpan=STEP, 
-        smooth=SOLVER_DEFAULT, data= amp_move)
-    mdb.models[model_name].boundaryConditions['wheel'].setValuesInStep(
-        stepName='loading', u3=30.0, amplitude='move')
+    mdb.models[model_name].TabularAmplitude(name='move', timeSpan=STEP, smooth=SOLVER_DEFAULT, data= amp_move)
+    
+    # creating wheel motion boundary condition based on rolling and sliding
+    if('tran' in model_name): # when wheel needs to be translated
+        mdb.models[model_name].DisplacementBC(name='wheel', createStepName='Initial', region=region, u1=SET, 
+            u2=UNSET, u3=SET, ur1=UNSET, ur2=SET, ur3=SET, amplitude=UNSET, distributionType=UNIFORM, fieldName='',localCsys=None)
+        mdb.models[model_name].boundaryConditions['wheel'].setValuesInStep(stepName='loading', u3=10.0, amplitude='move')
+    else: # when wheel needs to be rotated
+        mdb.models[model_name].DisplacementBC(name='wheel', createStepName='Initial', region=region, u1=SET, 
+            u2=UNSET, u3=UNSET, ur1=SET, ur2=SET, ur3=SET, amplitude=UNSET, distributionType=UNIFORM, fieldName='',localCsys=None)
+        mdb.models[model_name].boundaryConditions['wheel'].setValuesInStep(stepName='loading', ur1=20.0, amplitude='move')
+
     # Meshing
-    msh = {'ballast':0.3,'subballast':0.3,'subgrade':0.6,'rail':0.15,'sleepers':0.2,'wheel':0.1}
+    msh = {'ballast':0.3,'subballast':0.3,'subgrade':0.6,'rail':0.10,'sleepers':0.2,'wheel':0.05}
     for k,v in msh.items():
         p = mdb.models[model_name].parts[k]
         p.seedPart(size=v, deviationFactor=0.1, minSizeFactor=0.1)
